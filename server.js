@@ -1,3 +1,7 @@
+console.log("ENV CHECK:");
+console.log("TWILIO_SID:", process.env.TWILIO_SID);
+console.log("TWILIO_AUTH:", process.env.TWILIO_AUTH);
+console.log("FROM_NUMBER:", process.env.FROM_NUMBER);
 import express from "express";
 import axios from "axios";
 import fs from "fs";
