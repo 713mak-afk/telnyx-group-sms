@@ -58,7 +58,7 @@ async function sendMessage(to, message) {
       Body: message
     });
 
-    await axios.post(
+    const res = await axios.post(
       `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_SID}/Messages.json`,
       payload,
       {
@@ -68,8 +68,13 @@ async function sendMessage(to, message) {
         }
       }
     );
+    console.log(`Message sent to ${to}, SID: ${res.data.sid}`);
   } catch (error) {
-    console.error("Twilio Error:", error);
+    if (error.response) {
+      console.error("Twilio API Error:", error.response.status, error.response.data);
+    } else {
+      console.error("Network / Server Error:", error.message);
+    }
   }
 }
 
@@ -172,7 +177,13 @@ app.post("/sms", async (req, res) => {
   res.send("<Response></Response>");
 });
 
-// Start server
-app.listen(3000, () => {
-  console.log("Server running on port 3000");
+// בדיקת שרת בדפדפן
+app.get("/", (req, res) => {
+  res.send("SMS Server is running! 🚀");
+});
+
+// הפעלת השרת עם הפורט הדינמי של Render
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
