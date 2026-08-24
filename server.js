@@ -1,197 +1,178 @@
-console.log("ENV CHECK:");
-console.log("TWILIO_SID:", process.env.TWILIO_SID);
-console.log("TWILIO_AUTH:", process.env.TWILIO_AUTH);
-console.log("FROM_NUMBER:", process.env.FROM_NUMBER);
 import express from "express";
+import bodyParser from "body-parser";
 import axios from "axios";
 import fs from "fs";
 
 const app = express();
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
 
-// Twilio sends x-www-form-urlencoded
-app.use(express.urlencoded({ extended: false }));
-app.use(express.json());
-
-// Admin info
-const ADMIN_NAME = "MK";
-const ADMIN_NUMBER = "+18483735035";
+// ENV check
+console.log("ENV CHECK:");
+console.log("TWILIO_SID:", process.env.TWILIO_SID);
+console.log("TWILIO_AUTH:", process.env.TWILIO_AUTH);
+console.log("FROM_NUMBER:", process.env.FROM_NUMBER);
 
 // JSON file path
 const GROUP_FILE = "./group.json";
+const ADMIN_FILE = "./admins.json";
 
-// Load group from JSON file
+// Load group from JSON
 let GROUP = [];
+let ADMINS = [];
+
+// Load group file
 if (fs.existsSync(GROUP_FILE)) {
   GROUP = JSON.parse(fs.readFileSync(GROUP_FILE));
 } else {
   fs.writeFileSync(GROUP_FILE, JSON.stringify([]));
 }
 
-// Save group to JSON file
+// Load admin file
+if (fs.existsSync(ADMIN_FILE)) {
+  ADMINS = JSON.parse(fs.readFileSync(ADMIN_FILE));
+} else {
+  fs.writeFileSync(ADMIN_FILE, JSON.stringify([]));
+}
+
+// Save group
 function saveGroup() {
   fs.writeFileSync(GROUP_FILE, JSON.stringify(GROUP, null, 2));
 }
 
-// Find member by number
-function findMember(number) {
-  return GROUP.find(m => m.number === number);
+// Save admins
+function saveAdmins() {
+  fs.writeFileSync(ADMIN_FILE, JSON.stringify(ADMINS, null, 2));
 }
 
-// Handle #add (admin only)
-function handleAdd(sender, text) {
-  if (sender !== ADMIN_NUMBER) return;
-
-  const parts = text.split(" ");
-  if (parts.length < 3) return;
-
-  const name = parts[1];
-  const number = parts[2];
-
-  GROUP.push({ name, number });
-  saveGroup();
-
-  console.log("Added:", name, number);
-}
-
-// Handle #remove (admin only)
-function handleRemove(sender, text) {
-  if (sender !== ADMIN_NUMBER) return;
-
-  const parts = text.split(" ");
-  if (parts.length < 2) return;
-
-  const target = parts[1];
-
-  GROUP = GROUP.filter(
-    m => m.name !== target && m.number !== target
-  );
-
-  saveGroup();
-  console.log("Removed:", target);
-}
-
-// Handle #list (everyone)
-function handleList(sender) {
-  let msg = "Group members:\n";
-  for (const m of GROUP) {
-    msg += `${m.name} - ${m.number}\n`;
-  }
-  return msg;
-}
-
-// Handle #rename (everyone)
-function handleRename(sender, text) {
-  const parts = text.split(" ");
-  if (parts.length < 2) return;
-
-  const newName = parts[1];
-  const member = findMember(sender);
-
-  if (member) {
-    member.name = newName;
-    saveGroup();
-    console.log("Renamed:", sender, "to", newName);
-  }
-}
-
-// Handle #exit (everyone)
-function handleExit(sender) {
-  GROUP = GROUP.filter(m => m.number !== sender);
-  saveGroup();
-  console.log("User exited:", sender);
-}
-
-// Handle #help (everyone)
-function handleHelp() {
-  return (
-    "Commands:\n" +
-    "#list - show group members\n" +
-    "#rename [newName] - change your name\n" +
-    "#exit - leave the group\n" +
-    "#help - show commands\n" +
-    "#add [name] [number] - admin only\n" +
-    "#remove [name/number] - admin only\n" +
-    "#admin - admin only"
-  );
-}
-
-// Handle #admin (admin only)
-function handleAdmin(sender) {
-  if (sender !== ADMIN_NUMBER) return "Unauthorized";
-  return `Admin: ${ADMIN_NAME} (${ADMIN_NUMBER})`;
-}
-
-// Twilio inbound webhook
-app.post("/inbound-sms", async (req, res) => {
+// Send SMS via Twilio
+async function sendMessage(to, message) {
   try {
-    const sender = req.body.From;
-    const text = req.body.Body;
+    const authString = Buffer.from(
+      `${process.env.TWILIO_SID}:${process.env.TWILIO_AUTH}`
+    ).toString("base64");
 
-    console.log("Incoming:", sender, text);
+    const payload = new URLSearchParams({
+      From: process.env.FROM_NUMBER,
+      To: to,
+      Body: message
+    });
 
-    let reply = null;
-
-    // Commands
-    if (text.startsWith("#add")) handleAdd(sender, text);
-    else if (text.startsWith("#remove")) handleRemove(sender, text);
-    else if (text.startsWith("#list")) reply = handleList(sender);
-    else if (text.startsWith("#rename")) handleRename(sender, text);
-    else if (text.startsWith("#exit")) handleExit(sender);
-    else if (text.startsWith("#help")) reply = handleHelp();
-    else if (text.startsWith("#admin")) reply = handleAdmin(sender);
-
-    // If command produced a reply → send only to sender
-    if (reply) {
-      await axios.post(
-        `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_SID}/Messages.json`,
-        new URLSearchParams({
-          From: process.env.FROM_NUMBER,
-          To: sender,
-          Body: reply
-        }),
-        {
-          auth: {
-            username: process.env.TWILIO_SID,
-            password: process.env.TWILIO_AUTH
-          }
+    await axios.post(
+      `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_SID}/Messages.json`,
+      payload,
+      {
+        headers: {
+          Authorization: `Basic ${authString}`,
+          "Content-Type": "application/x-www-form-urlencoded"
         }
-      );
-
-      return res.send("<Response></Response>");
-    }
-
-    // Normal message → broadcast to group
-    for (const member of GROUP) {
-      if (member.number !== sender) {
-        await axios.post(
-          `https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_SID}/Messages.json`,
-          new URLSearchParams({
-            From: process.env.FROM_NUMBER,
-            To: member.number,
-            Body: `${text}`
-          }),
-          {
-            auth: {
-              username: process.env.TWILIO_SID,
-              password: process.env.TWILIO_AUTH
-            }
-          }
-        );
       }
-    }
-
-    res.send("<Response></Response>");
-  } catch (err) {
-    console.error(err);
-    res.sendStatus(500);
+    );
+  } catch (error) {
+    console.error("Twilio Error:", error);
   }
+}
+
+// Broadcast message to group
+async function broadcast(sender, text) {
+  for (const member of GROUP) {
+    if (member.number !== sender) {
+      await sendMessage(member.number, text);
+    }
+  }
+}
+
+// Handle commands
+function parseCommand(from, body) {
+  const parts = body.trim().split(" ");
+  const cmd = parts[0].toLowerCase();
+
+  const sender = GROUP.find(m => m.number === from);
+
+  if (cmd === "#list") {
+    return GROUP.map(m => `${m.name}: ${m.number}`).join("\n");
+  }
+
+  if (cmd === "#rename") {
+    const newName = parts.slice(1).join(" ");
+    if (!sender) return "You are not in the group.";
+    sender.name = newName;
+    saveGroup();
+    return `Your name has been updated to ${newName}`;
+  }
+
+  if (cmd === "#exit") {
+    GROUP = GROUP.filter(m => m.number !== from);
+    saveGroup();
+    return "You have left the group.";
+  }
+
+  if (cmd === "#admin") {
+    if (!ADMINS.includes(from)) return "Admin only.";
+    return "Admin panel:\n#add [name] [number]\n#remove [name/number]\n#promote [number]";
+  }
+
+  if (cmd === "#add") {
+    if (!ADMINS.includes(from)) return "Admin only.";
+    const name = parts[1];
+    const number = parts[2];
+    if (!name || !number) return "Usage: #add [name] [number]";
+    GROUP.push({ name, number });
+    saveGroup();
+    return `${name} added to group.`;
+  }
+
+  if (cmd === "#remove") {
+    if (!ADMINS.includes(from)) return "Admin only.";
+    const target = parts[1];
+    GROUP = GROUP.filter(
+      m => m.name !== target && m.number !== target
+    );
+    saveGroup();
+    return `${target} removed from group.`;
+  }
+
+  if (cmd === "#promote") {
+    if (!ADMINS.includes(from)) return "Admin only.";
+    const number = parts[1];
+    if (!number) return "Usage: #promote [number]";
+    if (!ADMINS.includes(number)) {
+      ADMINS.push(number);
+      saveAdmins();
+      return `${number} is now an admin.`;
+    }
+    return `${number} is already an admin.`;
+  }
+
+  return null;
+}
+
+// Twilio webhook
+app.post("/sms", async (req, res) => {
+  const from = req.body.From;
+  const body = req.body.Body;
+
+  console.log("Incoming:", from, body);
+
+  // Auto-add sender if not in group
+  if (!GROUP.find(m => m.number === from)) {
+    GROUP.push({ name: from, number: from });
+    saveGroup();
+  }
+
+  // Check for command
+  const result = parseCommand(from, body);
+
+  if (result) {
+    await sendMessage(from, result);
+  } else {
+    await broadcast(from, body);
+  }
+
+  res.send("<Response></Response>");
 });
 
-// List group members (HTTP)
-app.get("/group/list", (req, res) => {
-  res.json(GROUP);
-});
-
+// Start server
 app.listen(3000, () => {
   console.log("Server running on port 3000");
 });
